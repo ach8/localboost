@@ -4,12 +4,22 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
-.env
 
 # Node
 node_modules/
 dist/
+.next/
+out/
+coverage/
+
+# Env files (never commit secrets)
+.env
 .env.local
+.env.*.local
+
+# Prisma
+prisma/*.db
+prisma/*.db-journal
 
 # IDE
 .vscode/

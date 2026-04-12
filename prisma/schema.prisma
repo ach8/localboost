@@ -1,0 +1,62 @@
+// LocalBoost — Prisma schema
+// Database provider: Supabase (PostgreSQL)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Business {
+  id        String   @id @default(cuid())
+  name      String
+  googlePlaceId String? @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  reviews   GoogleReview[]
+}
+
+model GoogleReview {
+  id           String   @id @default(cuid())
+  businessId   String
+  business     Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  // Identifier from Google's review payload
+  externalId   String   @unique
+  reviewerName String?
+  rating       Int
+  comment      String?
+  postedAt     DateTime?
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  response     ReviewResponse?
+}
+
+model ReviewResponse {
+  id          String   @id @default(cuid())
+  reviewId    String   @unique
+  review      GoogleReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  // AI-generated response text
+  content     String
+  model       String
+  promptTokens Int?
+  completionTokens Int?
+  status      ResponseStatus @default(DRAFT)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+enum ResponseStatus {
+  DRAFT
+  APPROVED
+  PUBLISHED
+  REJECTED
+}
