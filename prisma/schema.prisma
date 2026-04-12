@@ -1,0 +1,42 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Business {
+  id        String   @id @default(cuid())
+  name      String
+  category  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  reviews   Review[]
+}
+
+model Review {
+  id         String          @id @default(cuid())
+  businessId String
+  business   Business        @relation(fields: [businessId], references: [id])
+  authorName String
+  rating     Int
+  comment    String
+  sourceUrl  String?
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+  responses  ReviewResponse[]
+}
+
+model ReviewResponse {
+  id        String   @id @default(cuid())
+  reviewId  String
+  review    Review   @relation(fields: [reviewId], references: [id])
+  body      String
+  tone      String   @default("professional")
+  createdAt DateTime @default(now())
+}
