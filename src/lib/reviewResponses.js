@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import { prisma as defaultPrisma } from './prisma.js';
 import { getOpenAIClient } from './openai.js';
+import { moderateContent, ModerationError } from './moderation.js';
 
-const reviewInputSchema = z.object({
+export const reviewInputSchema = z.object({
   reviewId: z.string().min(1),
   businessName: z.string().min(1),
   rating: z.number().int().min(1).max(5),
@@ -52,6 +53,17 @@ export async function generateAndStoreReviewResponse(rawInput, deps = {}) {
   const content = completion?.choices?.[0]?.message?.content?.trim();
   if (!content) {
     throw new Error('OpenAI returned an empty response');
+  }
+
+  // Moderate the generated content BEFORE persistence. A flagged response is
+  // never written to the database. `moderationClient` is optional; when
+  // absent only the lexical blocklist runs.
+  const moderate = deps.moderate ?? moderateContent;
+  const moderation = await moderate(content, {
+    moderationClient: deps.moderationClient,
+  });
+  if (moderation.flagged) {
+    throw new ModerationError(moderation);
   }
 
   const usage = completion.usage ?? {};

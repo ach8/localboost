@@ -60,3 +60,21 @@ enum ResponseStatus {
   PUBLISHED
   REJECTED
 }
+
+enum JobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model ReviewJob {
+  id           String    @id @default(cuid())
+  reviewId     String
+  status       JobStatus @default(PENDING)
+  errorMessage String?
+  inputPayload Json
+  responseId   String?   @unique
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
