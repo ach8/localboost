@@ -20,13 +20,23 @@ model Business {
   reviews   GoogleReview[]
 }
 
+// Historically Google-only; now stores customer feedback from any
+// supported channel. The model name is kept for migration compatibility —
+// callers should treat this as the generic "review" table and filter on
+// `source` when channel matters.
 model GoogleReview {
   id           String   @id @default(cuid())
   businessId   String
   business     Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
-  // Identifier from Google's review payload
-  externalId   String   @unique
+  // Where the review originated. Defaults to GOOGLE so existing rows
+  // remain valid without a backfill.
+  source       ReviewSource @default(GOOGLE)
+
+  // Identifier from the upstream provider's payload (e.g. Google review id).
+  // Nullable because DIRECT feedback collected through LocalBoost has no
+  // external id. Postgres permits multiple NULLs under a unique constraint.
+  externalId   String?  @unique
   reviewerName String?
   rating       Int
   comment      String?
@@ -36,6 +46,20 @@ model GoogleReview {
   updatedAt    DateTime @updatedAt
 
   response     ReviewResponse?
+
+  // Covering indexes for the Review Management Dashboard. Every query is
+  // scoped by businessId, so it leads each composite. postedAt / rating /
+  // createdAt are the sortable columns; rating also doubles as the
+  // star-filter equality column.
+  @@index([businessId, postedAt])
+  @@index([businessId, rating])
+  @@index([businessId, createdAt])
+  @@index([businessId, source])
+}
+
+enum ReviewSource {
+  GOOGLE
+  DIRECT
 }
 
 model ReviewResponse {
