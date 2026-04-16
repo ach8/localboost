@@ -25,6 +25,26 @@ describe('buildReviewWhere', () => {
     expect(buildReviewWhere({ source: 'DIRECT' })).toEqual({ source: 'DIRECT' });
   });
 
+  describe('responseStatus filter', () => {
+    it.each([['DRAFT'], ['APPROVED'], ['PUBLISHED'], ['REJECTED']])(
+      'narrows to rows whose response is currently %s',
+      (status) => {
+        expect(buildReviewWhere({ responseStatus: status })).toEqual({
+          response: { is: { status } },
+        });
+      },
+    );
+
+    it('selects reviews with NO response row when responseStatus=NONE', () => {
+      expect(buildReviewWhere({ responseStatus: 'NONE' })).toEqual({ response: { is: null } });
+    });
+
+    it('ignores unknown values (defence in depth — parser already guards this)', () => {
+      expect(buildReviewWhere({ responseStatus: 'PENDING' })).toEqual({});
+      expect(buildReviewWhere({ responseStatus: null })).toEqual({});
+    });
+  });
+
   describe('date-range filter (postedAt)', () => {
     it('applies a lower bound at UTC start-of-day', () => {
       expect(buildReviewWhere({ from: '2026-03-01' })).toEqual({
@@ -138,7 +158,7 @@ describe('listReviews', () => {
       take: 10,
       include: {
         business: { select: { id: true, name: true } },
-        response: { select: { id: true, status: true } },
+        response: { select: { id: true, status: true, content: true, updatedAt: true } },
       },
     });
 

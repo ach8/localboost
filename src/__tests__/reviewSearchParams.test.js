@@ -20,6 +20,7 @@ describe('parseReviewSearchParams', () => {
       order: 'asc',
       rating: '4',
       source: 'DIRECT',
+      responseStatus: 'DRAFT',
       from: '2026-01-01',
       to: '2026-01-31',
       q: '  great service  ',
@@ -31,10 +32,24 @@ describe('parseReviewSearchParams', () => {
       order: 'asc',
       rating: 4,
       source: 'DIRECT',
+      responseStatus: 'DRAFT',
       from: '2026-01-01',
       to: '2026-01-31',
       q: 'great service',
     });
+  });
+
+  it.each([['DRAFT'], ['APPROVED'], ['PUBLISHED'], ['REJECTED'], ['NONE']])(
+    'accepts responseStatus=%s',
+    (value) => {
+      expect(parseReviewSearchParams({ responseStatus: value }).responseStatus).toBe(value);
+    },
+  );
+
+  it('falls back to null for an unknown responseStatus (shared URLs must never 500)', () => {
+    expect(parseReviewSearchParams({ responseStatus: 'PENDING_APPROVAL' }).responseStatus).toBe(
+      null,
+    );
   });
 
   it('reads only the first value when Next.js supplies an array', () => {
@@ -77,6 +92,8 @@ describe('serializeReviewSearchParams', () => {
     expect(serializeReviewSearchParams({ from: '2026-01-01', to: '2026-01-31' })).toBe(
       'from=2026-01-01&to=2026-01-31',
     );
+    expect(serializeReviewSearchParams({ responseStatus: 'DRAFT' })).toBe('responseStatus=DRAFT');
+    expect(serializeReviewSearchParams({ responseStatus: 'NONE' })).toBe('responseStatus=NONE');
   });
 
   it('round-trips: serialize → parse yields the same state', () => {
@@ -87,6 +104,7 @@ describe('serializeReviewSearchParams', () => {
       order: 'asc',
       rating: 1,
       source: 'GOOGLE',
+      responseStatus: 'REJECTED',
       from: '2025-12-01',
       to: '2026-02-28',
       q: 'rude staff',

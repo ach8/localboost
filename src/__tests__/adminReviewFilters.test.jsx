@@ -18,9 +18,13 @@ vi.mock('next/link', () => ({
   ),
 }));
 
-// Server action — stubbed; the real auth/Prisma path is covered in
+// Server actions — stubbed; the real auth/Prisma path is covered in
 // adminReviewsAction.test.js.
-vi.mock('@/app/admin/reviews/actions', () => ({ deleteReview: vi.fn() }));
+vi.mock('@/app/admin/reviews/actions', () => ({
+  deleteReview: vi.fn(),
+  approveReviewResponse: vi.fn(),
+  regenerateReviewResponse: vi.fn(),
+}));
 
 // `useTransition` can't be held pending against a mocked router in jsdom
 // (there's no RSC fetch to suspend on), so we replace it with a controllable
@@ -34,7 +38,11 @@ vi.mock('react', async () => {
 
 import ReviewPanel, { UNDO_DELAY_MS } from '@/app/admin/reviews/components/ReviewPanel';
 import { REVIEW_SEARCH_DEFAULTS } from '@/app/admin/reviews/searchParams';
-import { deleteReview } from '@/app/admin/reviews/actions';
+import {
+  approveReviewResponse,
+  deleteReview,
+  regenerateReviewResponse,
+} from '@/app/admin/reviews/actions';
 
 const baseState = { ...REVIEW_SEARCH_DEFAULTS };
 
@@ -46,8 +54,21 @@ const sampleItems = [
     comment: 'Great!',
     source: 'GOOGLE',
     postedAt: null,
+    response: {
+      id: 'resp_r1',
+      status: 'DRAFT',
+      content: 'Thanks so much, Alice! We appreciate your kind words.',
+    },
   },
-  { id: 'r2', rating: 2, reviewerName: 'Bob', comment: 'Meh', source: 'DIRECT', postedAt: null },
+  {
+    id: 'r2',
+    rating: 2,
+    reviewerName: 'Bob',
+    comment: 'Meh',
+    source: 'DIRECT',
+    postedAt: null,
+    response: null,
+  },
 ];
 
 function renderPanel(state = baseState, paging = {}, items = sampleItems) {
@@ -70,6 +91,20 @@ describe('Review Management — ReviewPanel', () => {
     refresh.mockReset();
     transition.pending = false;
     vi.mocked(deleteReview).mockReset().mockResolvedValue({ ok: true, deleted: true });
+    vi.mocked(approveReviewResponse)
+      .mockReset()
+      .mockResolvedValue({ ok: true, response: { id: 'resp_r1', status: 'APPROVED' } });
+    vi.mocked(regenerateReviewResponse)
+      .mockReset()
+      .mockResolvedValue({
+        ok: true,
+        response: {
+          id: 'resp_r1',
+          status: 'DRAFT',
+          content: 'Newly regenerated response.',
+          updatedAt: new Date('2026-04-15T12:00:00.000Z'),
+        },
+      });
   });
 
   describe('URL-backed filter controls', () => {
@@ -244,7 +279,7 @@ describe('Review Management — ReviewPanel', () => {
       expect(deleteReview).toHaveBeenCalledWith({ reviewId: 'r1' });
     });
 
-    it('rolls back the optimistic hide and surfaces an error if the action fails', async () => {
+    it('rolls back the optimistic hide and surfaces an error toast if the action fails', async () => {
       vi.mocked(deleteReview).mockResolvedValue({ ok: false, error: 'Unauthorized.' });
       renderPanel();
       clickDelete('r1', 'Alice');
@@ -253,8 +288,21 @@ describe('Review Management — ReviewPanel', () => {
 
       // Row is back, error toast shown, no refresh.
       expect(screen.getByTestId('review-row-r1')).toBeInTheDocument();
-      expect(screen.getByRole('alert')).toHaveTextContent(/unauthorized/i);
+      const region = screen.getByTestId('notification-toast-region');
+      expect(region).toHaveTextContent(/couldn.t delete review/i);
+      expect(region).toHaveTextContent(/unauthorized/i);
       expect(refresh).not.toHaveBeenCalled();
+    });
+
+    it('shows a success toast confirming the delete when the commit succeeds', async () => {
+      renderPanel();
+      clickDelete('r1', 'Alice');
+
+      await act(() => vi.advanceTimersByTimeAsync(UNDO_DELAY_MS));
+
+      const region = screen.getByTestId('notification-toast-region');
+      expect(region).toHaveTextContent(/review deleted/i);
+      expect(region).toHaveTextContent(/alice/i);
     });
 
     it('aborts every uncommitted delete when the panel unmounts', () => {
@@ -263,6 +311,258 @@ describe('Review Management — ReviewPanel', () => {
       unmount();
       act(() => vi.advanceTimersByTime(UNDO_DELAY_MS * 2));
       expect(deleteReview).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('AI response workflow — expand, accept, regenerate', () => {
+    const clickView = (id, name) =>
+      fireEvent.click(
+        within(screen.getByTestId(`review-row-${id}`)).getByRole('button', {
+          name: new RegExp(`view ai response for review from ${name}`, 'i'),
+        }),
+      );
+
+    it('does not render an expanded panel by default', () => {
+      renderPanel();
+      expect(screen.queryByTestId('review-response-r1')).toBeNull();
+    });
+
+    it('omits the View button entirely for reviews without an AI response', () => {
+      renderPanel();
+      const row = screen.getByTestId('review-row-r2');
+      expect(within(row).queryByRole('button', { name: /view ai response/i })).toBeNull();
+    });
+
+    it('expands the row to reveal the full generated content and workflow buttons', () => {
+      renderPanel();
+      clickView('r1', 'Alice');
+
+      const panel = screen.getByTestId('review-response-r1');
+      expect(panel).toBeInTheDocument();
+      expect(screen.getByTestId('review-response-content-r1')).toHaveTextContent(
+        /thanks so much, alice/i,
+      );
+      expect(within(panel).getByTestId('approve-response-r1')).toBeEnabled();
+      expect(within(panel).getByTestId('regenerate-response-r1')).toBeEnabled();
+      expect(
+        screen.getByRole('button', { name: /hide ai response for review from alice/i }),
+      ).toHaveAttribute('aria-expanded', 'true');
+    });
+
+    it('toggles the expansion closed on a second click', () => {
+      renderPanel();
+      clickView('r1', 'Alice');
+      fireEvent.click(
+        screen.getByRole('button', { name: /hide ai response for review from alice/i }),
+      );
+      expect(screen.queryByTestId('review-response-r1')).toBeNull();
+    });
+
+    it('accepts a draft response: calls approveReviewResponse, refreshes, and toasts success', async () => {
+      renderPanel();
+      clickView('r1', 'Alice');
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('approve-response-r1'));
+      });
+
+      expect(approveReviewResponse).toHaveBeenCalledWith({ responseId: 'resp_r1' });
+      expect(refresh).toHaveBeenCalled();
+
+      const region = screen.getByTestId('notification-toast-region');
+      const toast = within(region).getAllByRole('status')[0];
+      expect(toast).toHaveAttribute('data-tone', 'success');
+      expect(toast).toHaveTextContent(/response approved/i);
+      expect(toast).toHaveTextContent(/alice/i);
+    });
+
+    it('surfaces a rejection error from approveReviewResponse as a toast, without refreshing', async () => {
+      vi.mocked(approveReviewResponse).mockResolvedValue({ ok: false, error: 'Forbidden.' });
+      renderPanel();
+      clickView('r1', 'Alice');
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('approve-response-r1'));
+      });
+
+      expect(refresh).not.toHaveBeenCalled();
+      const alert = screen.getByRole('alert');
+      expect(alert).toHaveAttribute('data-tone', 'error');
+      expect(alert).toHaveTextContent(/couldn.t approve response/i);
+      expect(alert).toHaveTextContent(/forbidden/i);
+    });
+
+    it('hides Accept for an already-APPROVED response (operator cannot re-approve)', () => {
+      const approvedItems = [
+        {
+          ...sampleItems[0],
+          response: {
+            id: 'resp_r1',
+            status: 'APPROVED',
+            content: 'Already accepted content.',
+          },
+        },
+        sampleItems[1],
+      ];
+      renderPanel(baseState, {}, approvedItems);
+      clickView('r1', 'Alice');
+      expect(screen.getByTestId('approve-response-r1')).toBeDisabled();
+      // Regenerate is still available — operators can replace an approved draft.
+      expect(screen.getByTestId('regenerate-response-r1')).toBeEnabled();
+    });
+
+    it('rejects & regenerates: triggers regenerateReviewResponse, refreshes, and toasts success', async () => {
+      renderPanel();
+      clickView('r1', 'Alice');
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('regenerate-response-r1'));
+      });
+
+      expect(regenerateReviewResponse).toHaveBeenCalledWith({ reviewId: 'r1' });
+      expect(refresh).toHaveBeenCalled();
+
+      const region = screen.getByTestId('notification-toast-region');
+      const toast = within(region).getAllByRole('status')[0];
+      expect(toast).toHaveAttribute('data-tone', 'success');
+      expect(toast).toHaveTextContent(/new response generated/i);
+    });
+
+    it('disables the workflow buttons while regeneration is in-flight', async () => {
+      let resolveRegen;
+      vi.mocked(regenerateReviewResponse).mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveRegen = resolve;
+          }),
+      );
+
+      renderPanel();
+      clickView('r1', 'Alice');
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('regenerate-response-r1'));
+      });
+
+      expect(screen.getByTestId('approve-response-r1')).toBeDisabled();
+      expect(screen.getByTestId('regenerate-response-r1')).toBeDisabled();
+      expect(screen.getByTestId('response-pending-r1')).toBeInTheDocument();
+
+      await act(async () => {
+        resolveRegen({
+          ok: true,
+          response: {
+            id: 'resp_r1',
+            status: 'DRAFT',
+            content: 'fresh',
+            updatedAt: new Date(),
+          },
+        });
+      });
+
+      expect(refresh).toHaveBeenCalled();
+    });
+
+    it('surfaces an error-toast when regeneration is blocked by moderation', async () => {
+      vi.mocked(regenerateReviewResponse).mockResolvedValue({
+        ok: false,
+        error: 'Generated response was flagged by moderation. Please try again.',
+      });
+      renderPanel();
+      clickView('r1', 'Alice');
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('regenerate-response-r1'));
+      });
+
+      expect(refresh).not.toHaveBeenCalled();
+      const alert = screen.getByRole('alert');
+      expect(alert).toHaveAttribute('data-tone', 'error');
+      expect(alert).toHaveTextContent(/couldn.t regenerate response/i);
+      expect(alert).toHaveTextContent(/moderation/i);
+
+      // Operator can dismiss the toast manually.
+      fireEvent.click(within(alert).getByRole('button', { name: /dismiss notification/i }));
+      expect(screen.queryByRole('alert')).toBeNull();
+    });
+
+    it('handles a network failure on approve without leaving buttons stuck in pending', async () => {
+      vi.mocked(approveReviewResponse).mockRejectedValue(new Error('offline'));
+      renderPanel();
+      clickView('r1', 'Alice');
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('approve-response-r1'));
+      });
+
+      const alert = screen.getByRole('alert');
+      expect(alert).toHaveAttribute('data-tone', 'error');
+      expect(alert).toHaveTextContent(/unable to reach the server/i);
+      expect(screen.getByTestId('approve-response-r1')).toBeEnabled();
+      expect(screen.getByTestId('regenerate-response-r1')).toBeEnabled();
+    });
+  });
+
+  describe('response-status filter', () => {
+    it('reflects the incoming responseStatus in the dropdown', () => {
+      renderPanel({ ...baseState, responseStatus: 'DRAFT' }, { total: 3 });
+      expect(screen.getByLabelText(/response status/i)).toHaveValue('DRAFT');
+    });
+
+    it('writes responseStatus to the URL when an operator picks one, resetting to page 1', () => {
+      renderPanel({ ...baseState, page: 4 }, { total: 100, page: 4, pageCount: 5 });
+      fireEvent.change(screen.getByLabelText(/response status/i), { target: { value: 'DRAFT' } });
+      expect(replace).toHaveBeenCalledWith('/admin/reviews?responseStatus=DRAFT', {
+        scroll: false,
+      });
+    });
+
+    it('offers a dedicated "No response yet" option for reviews that still need generation', () => {
+      renderPanel();
+      const select = screen.getByLabelText(/response status/i);
+      fireEvent.change(select, { target: { value: 'NONE' } });
+      expect(replace).toHaveBeenLastCalledWith('/admin/reviews?responseStatus=NONE', {
+        scroll: false,
+      });
+    });
+
+    it('clearing the dropdown removes the filter from the URL', () => {
+      renderPanel({ ...baseState, responseStatus: 'REJECTED' });
+      fireEvent.change(screen.getByLabelText(/response status/i), { target: { value: '' } });
+      expect(replace).toHaveBeenLastCalledWith('/admin/reviews', { scroll: false });
+    });
+
+    it('surfaces the "Clear filters" button when only responseStatus differs from default', () => {
+      renderPanel({ ...baseState, responseStatus: 'DRAFT' });
+      expect(screen.getByRole('button', { name: /clear filters/i })).toBeInTheDocument();
+    });
+  });
+
+  describe('toast auto-dismissal', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it('removes a success toast automatically after its lifetime elapses', async () => {
+      renderPanel();
+      fireEvent.click(
+        within(screen.getByTestId(`review-row-r1`)).getByRole('button', {
+          name: /view ai response for review from alice/i,
+        }),
+      );
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('approve-response-r1'));
+      });
+
+      expect(screen.getByTestId('notification-toast-region')).toHaveTextContent(
+        /response approved/i,
+      );
+
+      // Success toasts auto-dismiss after TOAST_SUCCESS_MS (4s).
+      await act(async () => {
+        vi.advanceTimersByTime(5000);
+      });
+      expect(screen.queryByTestId('notification-toast-region')).toBeNull();
     });
   });
 });

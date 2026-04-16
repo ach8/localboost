@@ -19,6 +19,19 @@ import { z } from 'zod';
 export const REVIEW_SORT_FIELDS = Object.freeze(['postedAt', 'rating', 'createdAt']);
 export const REVIEW_SORT_ORDERS = Object.freeze(['asc', 'desc']);
 export const REVIEW_SOURCES = Object.freeze(['GOOGLE', 'DIRECT']);
+// Response status filter. `NONE` is a synthetic value that selects reviews
+// with no attached `ReviewResponse` row at all — useful for triaging brand-new
+// reviews that haven't been run through the AI generator yet. The real
+// `ResponseStatus` enum values (DRAFT / APPROVED / PUBLISHED / REJECTED) map
+// 1:1 to prisma.ReviewResponse.status and select rows whose response currently
+// sits in that state.
+export const REVIEW_RESPONSE_STATUSES = Object.freeze([
+  'DRAFT',
+  'APPROVED',
+  'PUBLISHED',
+  'REJECTED',
+  'NONE',
+]);
 
 export const DEFAULT_PAGE_SIZE = 20;
 export const MAX_PAGE_SIZE = 100;
@@ -30,6 +43,7 @@ export const REVIEW_SEARCH_DEFAULTS = Object.freeze({
   order: 'desc',
   rating: null,
   source: null,
+  responseStatus: null,
   // Date-range filter on `postedAt`. Stored as ISO calendar dates
   // (YYYY-MM-DD) so they survive a URL round-trip without timezone drift
   // and bind directly to <input type="date">.
@@ -83,6 +97,7 @@ export const reviewSearchParamsSchema = z.object({
     }, z.number().int().min(1).max(5).optional())
     .transform((n) => n ?? null),
   source: enumOrNull(REVIEW_SOURCES),
+  responseStatus: enumOrNull(REVIEW_RESPONSE_STATUSES),
   from: isoDateOrNull,
   to: isoDateOrNull,
   q: z
@@ -122,6 +137,7 @@ export function serializeReviewSearchParams(state) {
   if (merged.order !== REVIEW_SEARCH_DEFAULTS.order) params.set('order', merged.order);
   if (merged.rating != null) params.set('rating', String(merged.rating));
   if (merged.source != null) params.set('source', merged.source);
+  if (merged.responseStatus != null) params.set('responseStatus', merged.responseStatus);
   if (merged.from != null) params.set('from', merged.from);
   if (merged.to != null) params.set('to', merged.to);
   if (merged.q) params.set('q', merged.q);

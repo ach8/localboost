@@ -29,12 +29,27 @@ function endOfUtcDay(iso) {
  * Build the Prisma `where` clause for a given filter state. Exported
  * separately so tests can assert on the shape without invoking Prisma.
  */
-export function buildReviewWhere({ rating, source, from, to, q, businessId } = {}) {
+export function buildReviewWhere({ rating, source, responseStatus, from, to, q, businessId } = {}) {
   const where = {};
 
   if (businessId) where.businessId = businessId;
   if (Number.isInteger(rating) && rating >= 1 && rating <= 5) where.rating = rating;
   if (source) where.source = source;
+
+  // Response-status filter. `NONE` selects reviews with no ReviewResponse row;
+  // any other value narrows to a specific ResponseStatus. Unknown values are
+  // ignored as defence-in-depth — the parser already validates against
+  // REVIEW_RESPONSE_STATUSES, but a hand-edited URL must never 500.
+  if (responseStatus === 'NONE') {
+    where.response = { is: null };
+  } else if (
+    responseStatus === 'DRAFT' ||
+    responseStatus === 'APPROVED' ||
+    responseStatus === 'PUBLISHED' ||
+    responseStatus === 'REJECTED'
+  ) {
+    where.response = { is: { status: responseStatus } };
+  }
 
   const gte = from ? startOfUtcDay(from) : null;
   const lte = to ? endOfUtcDay(to) : null;
@@ -82,7 +97,7 @@ export async function listReviews(state, { prisma = defaultPrisma, businessId } 
       take: pageSize,
       include: {
         business: { select: { id: true, name: true } },
-        response: { select: { id: true, status: true } },
+        response: { select: { id: true, status: true, content: true, updatedAt: true } },
       },
     }),
   ]);

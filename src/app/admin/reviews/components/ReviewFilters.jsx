@@ -1,7 +1,20 @@
 'use client';
 
 import { useState } from 'react';
-import { REVIEW_SORT_FIELDS, REVIEW_SOURCES, REVIEW_SEARCH_DEFAULTS } from '../searchParams';
+import {
+  REVIEW_SORT_FIELDS,
+  REVIEW_SOURCES,
+  REVIEW_RESPONSE_STATUSES,
+  REVIEW_SEARCH_DEFAULTS,
+} from '../searchParams';
+
+const RESPONSE_STATUS_LABELS = {
+  DRAFT: 'Draft — needs review',
+  APPROVED: 'Approved',
+  PUBLISHED: 'Published',
+  REJECTED: 'Rejected',
+  NONE: 'No response yet',
+};
 
 const SORT_LABELS = {
   postedAt: 'Date posted',
@@ -21,6 +34,7 @@ export default function ReviewFilters({ state, total, isPending, onNavigate, onR
   const isFiltered =
     state.rating !== REVIEW_SEARCH_DEFAULTS.rating ||
     state.source !== REVIEW_SEARCH_DEFAULTS.source ||
+    state.responseStatus !== REVIEW_SEARCH_DEFAULTS.responseStatus ||
     state.from !== REVIEW_SEARCH_DEFAULTS.from ||
     state.to !== REVIEW_SEARCH_DEFAULTS.to ||
     state.q !== REVIEW_SEARCH_DEFAULTS.q;
@@ -61,6 +75,22 @@ export default function ReviewFilters({ state, total, isPending, onNavigate, onR
               {REVIEW_SOURCES.map((s) => (
                 <option key={s} value={s}>
                   {s === 'GOOGLE' ? 'Google' : 'Direct feedback'}
+                </option>
+              ))}
+            </select>
+          </FieldShell>
+
+          <FieldShell id="filter-response-status" label="Response status">
+            <select
+              id="filter-response-status"
+              value={state.responseStatus ?? ''}
+              onChange={(e) => onNavigate({ responseStatus: e.target.value || null })}
+              className={selectClasses}
+            >
+              <option value="">Any status</option>
+              {REVIEW_RESPONSE_STATUSES.map((s) => (
+                <option key={s} value={s}>
+                  {RESPONSE_STATUS_LABELS[s]}
                 </option>
               ))}
             </select>
